@@ -23,7 +23,7 @@ class Attend(nn.Module):
             enable_mem_efficient = True
         )
         with torch.backends.cuda.sdp_kernel(**sdp_kwargs):
-            out = F.scaled_dot_product_attention(q, k, v)
+            out = F.scaled_dot_product_attention(q, k, v, scale = self.scale)
         return out
 
     def forward(self, q, k, v):
