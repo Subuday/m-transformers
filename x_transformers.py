@@ -39,6 +39,7 @@ class Attention(nn.Module):
         dim,
         dim_head = 64,
         num_heads = 8,
+        flash = False,
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -46,7 +47,8 @@ class Attention(nn.Module):
 
         self.to_qkv = nn.Linear(dim, dim_head * 3, bias = False)
         self.attend = Attend(
-            scale = self.scale
+            scale = self.scale,
+            flash = flash
         )
         self.to_out = nn.Linear(dim_head, dim, bias = False)
 
@@ -67,6 +69,7 @@ class AttentionLayers(nn.Module):
         depth,
         dim_head = 64,
         num_heads = 8,
+        attn_flash = False,
         ff_mult = 4,
     ):
         super().__init__()
@@ -75,7 +78,7 @@ class AttentionLayers(nn.Module):
             self.layers.append(
                 nn.ModuleList([
                     RMSNorm(dim = dim),
-                    Attention(dim = dim, dim_head = dim_head, num_heads = num_heads),
+                    Attention(dim = dim, dim_head = dim_head, num_heads = num_heads, flash = attn_flash),
                     RMSNorm(dim = dim),
                     FeedForward(dim = dim, mult = ff_mult)
                 ])
@@ -83,7 +86,7 @@ class AttentionLayers(nn.Module):
         self.out_norm = RMSNorm(dim)
 
     def forward(self, x):
-        for attn_norm, attn,  ff_norm, ff in self.layers:
+        for attn_norm, attn, ff_norm, ff in self.layers:
             attn_input = attn_norm(x)
             x = attn(attn_input) + x
             
