@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from attend import Attend
+from helpers import exists
 
 class RMSNorm(nn.Module):
     def __init__(self, dim):
@@ -40,6 +41,7 @@ class Attention(nn.Module):
         dim_head = 64,
         num_heads = 8,
         flash = False,
+        gate_per_head = False,
     ):
         super().__init__()
         self.num_heads = num_heads
@@ -50,14 +52,31 @@ class Attention(nn.Module):
             scale = self.scale,
             flash = flash
         )
+
+        # per head gating, from https://arxiv.org/abs/2306.12929
+        self.gate_per_head = None
+        if gate_per_head:
+            self.gate_per_head = nn.Linear(dim, num_heads)
+            nn.init.constant_(self.gate_per_head.weight, 0)
+            nn.init.constant_(self.gate_per_head.bias, 10)
+
         self.to_out = nn.Linear(dim_head, dim, bias = False)
 
 
     def forward(self, x):
         q, k, v = self.to_qkv(x).chunk(3, dim = -1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.num_heads), (q, k, v))
+
         out = self.attend(q, k, v)
+
+        # per head gating, from https://arxiv.org/abs/2306.12929
+        if exists(self.gate_per_head):
+            gated_heads = self.gate_per_head(x)
+            gated_heads = rearrange(gated_heads, 'b n h -> b h n 1').sigmoid()
+            out = out * gated_heads
+
         out = rearrange(out, 'b h n d -> b n (h d)')
+
         out = self.to_out(out)
         return out
 
@@ -70,6 +89,7 @@ class AttentionLayers(nn.Module):
         dim_head = 64,
         num_heads = 8,
         attn_flash = False,
+        attn_gate_per_head = False,
         ff_mult = 4,
     ):
         super().__init__()
@@ -78,7 +98,7 @@ class AttentionLayers(nn.Module):
             self.layers.append(
                 nn.ModuleList([
                     RMSNorm(dim = dim),
-                    Attention(dim = dim, dim_head = dim_head, num_heads = num_heads, flash = attn_flash),
+                    Attention(dim = dim, dim_head = dim_head, num_heads = num_heads, flash = attn_flash, gate_per_head = attn_gate_per_head),
                     RMSNorm(dim = dim),
                     FeedForward(dim = dim, mult = ff_mult)
                 ])
