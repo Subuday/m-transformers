@@ -1,3 +1,4 @@
+from einops import rearrange, repeat
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -27,12 +28,21 @@ class Attend(nn.Module):
         return out
 
     def forward(self, q, k, v):
+        num_heads, num_kv_heads = q.shape[1], k.shape[1]
+
+        # handle grouped multi-query attention
+        if num_kv_heads == 1:
+            k, v = map(lambda t: rearrange(t, 'b 1 n d -> b n d'), (k, v))
+        elif num_kv_heads < num_heads:
+            k, v = map(lambda t: repeat(t, 'b kvh n d -> b (r kvh) n d', r = num_heads // num_kv_heads), (k, v))
+
         if self.flash:
             return self.flash_attn(q, k, v)
 
         device = q.device
 
-        qk = torch.einsum('b h i d, b h j d -> b h i j', k, v)
+        eq = 'b j d' if k.ndim == 3 else 'b h j d'
+        qk = torch.einsum(f'b h i d, {eq} -> b h i j', q, k)
         qk = qk * self.scale
 
         mask = self._create_mask(qk.shape[-2], qk.shape[-1], device)
@@ -45,5 +55,5 @@ class Attend(nn.Module):
         qk = F.softmax(qk, dim = -1, dtype = torch.float32)
         qk = qk.type(qk_type)
 
-        out = torch.einsum('b h i j, b h j d -> b h i d', qk, v)
+        out = torch.einsum(f'b h i j, {eq} -> b h i d', qk, v)
         return out

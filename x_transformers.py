@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
 from attend import Attend
-from helpers import exists
+from helpers import default, exists
 
 class RMSNorm(nn.Module):
     def __init__(self, dim):
@@ -42,11 +42,24 @@ class Attention(nn.Module):
         num_heads = 8,
         flash = False,
         gate_per_head = False,
+        num_kv_heads = None
     ):
         super().__init__()
         self.num_heads = num_heads
+        num_kv_heads = default(num_kv_heads, num_heads)
+        self.num_kv_heads = num_kv_heads
+
+        q_dim = dim_head * num_heads
+        k_dim = dim_head * num_kv_heads
+        v_dim = dim_head * num_kv_heads
+        out_dim = dim_head * num_heads
+
         self.scale = dim_head ** -0.5
 
+        self.to_q = nn.Linear(dim, q_dim, bias = False)
+        self.to_k = nn.Linear(dim, k_dim, bias = False)
+        self.to_v = nn.Linear(dim, v_dim, bias = False) 
+        
         self.to_qkv = nn.Linear(dim, dim_head * 3, bias = False)
         self.attend = Attend(
             scale = self.scale,
@@ -60,12 +73,16 @@ class Attention(nn.Module):
             nn.init.constant_(self.gate_per_head.weight, 0)
             nn.init.constant_(self.gate_per_head.bias, 10)
 
-        self.to_out = nn.Linear(dim_head, dim, bias = False)
+        self.to_out = nn.Linear(out_dim, dim, bias = False)
 
 
     def forward(self, x):
-        q, k, v = self.to_qkv(x).chunk(3, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.num_heads), (q, k, v))
+        q = self.to_q(x)
+        k = self.to_k(x)
+        v = self.to_v(x)
+
+        q = rearrange(q, 'b n (h d) -> b h n d', h = self.num_heads)
+        k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.num_kv_heads), (k, v))
 
         out = self.attend(q, k, v)
 
@@ -90,6 +107,7 @@ class AttentionLayers(nn.Module):
         num_heads = 8,
         attn_flash = False,
         attn_gate_per_head = False,
+        attn_num_kv_heads = None,
         ff_mult = 4,
     ):
         super().__init__()
@@ -98,7 +116,14 @@ class AttentionLayers(nn.Module):
             self.layers.append(
                 nn.ModuleList([
                     RMSNorm(dim = dim),
-                    Attention(dim = dim, dim_head = dim_head, num_heads = num_heads, flash = attn_flash, gate_per_head = attn_gate_per_head),
+                    Attention(
+                        dim = dim,
+                        dim_head = dim_head,
+                        num_heads = num_heads,
+                        flash = attn_flash,
+                        gate_per_head = attn_gate_per_head,
+                        num_kv_heads = attn_num_kv_heads
+                    ),
                     RMSNorm(dim = dim),
                     FeedForward(dim = dim, mult = ff_mult)
                 ])

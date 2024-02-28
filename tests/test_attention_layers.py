@@ -13,7 +13,7 @@ class TestAttentionLayers(unittest.TestCase):
         x = torch.rand((batch_size, 32, 512)).to(device)
         return x
 
-    def _test_forward(self, batch_size, attn_flash = False, attn_gate_per_head = False):
+    def _test_forward(self, batch_size, attn_flash = False, attn_gate_per_head = False, attn_num_kv_heads = None):
         x = self._create_input(batch_size)
         attn_layers = AttentionLayers(
             dim = 512,
@@ -22,6 +22,7 @@ class TestAttentionLayers(unittest.TestCase):
             num_heads = 8, 
             attn_flash = attn_flash,
             attn_gate_per_head = attn_gate_per_head,
+            attn_num_kv_heads = attn_num_kv_heads,
             ff_mult = 4
         ).to(device)
         _ = attn_layers(x)
@@ -35,3 +36,9 @@ class TestAttentionLayers(unittest.TestCase):
 
     def test_gate_per_heads(self):
         self._test_forward(3, attn_gate_per_head = True)
+
+    def test_multi_query_attn(self):
+        self._test_forward(3, attn_num_kv_heads = 1)
+
+    def test_grouped_multi_query_attn(self):
+        self._test_forward(3, attn_num_kv_heads = 4)
