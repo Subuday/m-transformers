@@ -5,6 +5,16 @@ from einops import rearrange
 from attend import Attend
 from helpers import default, exists
 
+def rotate_half(x):
+    x = rearrange(x, '... (j d) -> ... j d', j = 2)
+    x1, x2 = x.unbind(dim = -2)
+    return torch.cat((-x2, x1), dim = -1)
+
+
+def apply_rotary_pos_emb(t, freqs, scale = 1):
+    return (t * freqs.cos() * scale) + (rotate_half(t) * freqs.sin() * scale)
+
+
 class RMSNorm(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -13,6 +23,7 @@ class RMSNorm(nn.Module):
 
     def forward(self, x):
         return F.normalize(x, dim = -1) * self.scale * self.g
+
 
 class FeedForward(nn.Module):
     def __init__(
@@ -76,13 +87,17 @@ class Attention(nn.Module):
         self.to_out = nn.Linear(out_dim, dim, bias = False)
 
 
-    def forward(self, x):
+    def forward(self, x, rotary_pos_emb = None):
         q = self.to_q(x)
         k = self.to_k(x)
         v = self.to_v(x)
 
         q = rearrange(q, 'b n (h d) -> b h n d', h = self.num_heads)
         k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.num_kv_heads), (k, v))
+
+        if exists(rotary_pos_emb):
+            q = apply_rotary_pos_emb(q, rotary_pos_emb)
+            k = apply_rotary_pos_emb(k, rotary_pos_emb)
 
         out = self.attend(q, k, v)
 
@@ -130,10 +145,10 @@ class AttentionLayers(nn.Module):
             )
         self.out_norm = RMSNorm(dim)
 
-    def forward(self, x):
+    def forward(self, x, rotary_pos_emb = None):
         for attn_norm, attn, ff_norm, ff in self.layers:
             attn_input = attn_norm(x)
-            x = attn(attn_input) + x
+            x = attn(attn_input, rotary_pos_emb = rotary_pos_emb) + x
             
             ff_input = ff_norm(x)
             x = ff(ff_input) + x
